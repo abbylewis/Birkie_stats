@@ -15,7 +15,6 @@ library(lubridate)
 ```
 
 Weather notes: https://www.birkie.com/wp-content/uploads/2018/02/Weather-Impact-to-Race-Over-the-Years-2018.pdf
-
 Coords: 46.18964577210026, -91.24062289257026
 
 ## Load data
@@ -73,7 +72,11 @@ temp_by_date <- dates %>%
                        ifelse(hour(DateTime) == 12, "Noon", NA))) %>%
   select(-Lat, -Lon) %>%
   filter(!is.na(Temp_C)) 
+```
 
+Plot temp
+
+```{r}
 temp_by_date %>%
   mutate(Modified = ifelse(is.na(Modified), 0, Modified)) %>%
   ggplot(aes(x = Date, y = Temp_C * (9/5) + 32)) +
@@ -85,7 +88,11 @@ temp_by_date %>%
   ylab("Temperature (ºF)") +
   facet_wrap(~time) +
   theme(legend.title = element_blank())
+```
 
+Plot snow
+
+```{r}
 data_2024 <- data.frame(time = "Noon",
                         Modified = "y",
                         Date = as.Date("2024-02-24"),
@@ -111,6 +118,8 @@ temp_by_date %>%
   geom_smooth(method = "lm", color = "black") +
   geom_point(aes(shape = as.factor(Modified), 
                  color = Temp_C * (9/5) + 32)) +
+  geom_text(aes(label = "y = -0.017x + 36\np = 0.01, R2 = 0.07", x = as.Date("1942-01-01"), y = 6.1), 
+            data = data.frame(), hjust = 0) +
   scale_shape_manual(values = c(16, 8, 4, 1), 
                      labels = c("No change", "Weather modification", "Canceled", "Pre-Birke"),
                      name = "Birke status") +
@@ -119,7 +128,7 @@ temp_by_date %>%
                         mid = "purple",
                         midpoint = 32,
                         name = "Temperature\nat noon (º F)") +
-  ylab("Snow depth on the day of the Birke (inches)") +
+  ylab("Snow depth on the day of the Birke\n(inches of water equivalent)") +
   theme_bw() +
   theme(axis.title.x = element_blank())
 dev.off()
@@ -136,12 +145,14 @@ for_bin_reg <- temp_by_date %>%
                            levels = c("0", "y", "canceled", "pre-Birke")),
          Snow_tf = ifelse(Snow_m * 39.3701 < 1, 0, 1))
 reg = glm(Snow_tf ~ Year, data = for_bin_reg, family = "binomial")
+summary(reg)
+exp(-0.05192)
 
 x = 1940:2024
 probs = data.frame(Year = x,
                    Probability = predict(reg, list(Year = x), type = "response")) 
 
-jpeg("Figures/birke_snow_prob.jpg", width = 5, height = 3.5, units = "in", res = 300)
+jpeg("Figures/birke_snow_prob.jpg", width = 5.5, height = 3.5, units = "in", res = 300)
 for_bin_reg %>%
   ggplot(aes(x = Year, y = Snow_tf)) +
   geom_vline(xintercept = 1973, linetype = "dashed", color = "grey") +
@@ -155,7 +166,10 @@ for_bin_reg %>%
                         mid = "purple",
                         midpoint = 32,
                         name = "Temperature\nat noon (º F)") +
-  ylab("Probability of snow > 1 in deep") +
+  ylab("Probability of ≥ 1 inch snow\nwater equivalent on the day of the Birke") +
+  geom_text(aes(x = 1942, y = 0.7, 
+                label = "Logistic regression\nOdds ratio: 0.95\np = 0.016"),
+            hjust = 0, data = data.frame()) +
   geom_line(data = probs, aes(x = Year, y = Probability), color = "black") +
   theme_bw() +
   theme(axis.title.x = element_blank())
