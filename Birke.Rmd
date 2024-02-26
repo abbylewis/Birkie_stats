@@ -1,0 +1,138 @@
+---
+title: "Birke"
+author: "Abby Lewis"
+date: "2024-02-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ncdf4)
+library(fields)
+library(tidyverse)
+library(data.table)
+library(lubridate)
+```
+
+Weather notes: https://www.birkie.com/wp-content/uploads/2018/02/Weather-Impact-to-Race-Over-the-Years-2018.pdf
+
+Coords: 46.18964577210026, -91.24062289257026
+
+## Load data
+
+```{r}
+#Read NC temp
+mynetcdf_t <- 'era5.nc' #Downloaded from here: https://cds.climate.copernicus.eu/cdsapp#!/dataset/reanalysis-era5-single-levels?tab=form
+ncFile_t <- nc_open(mynetcdf_t)
+Lon <- ncvar_get(ncFile_t,"longitude")
+Lon <- ifelse(Lon > 180, -(360 - Lon), Lon)
+Lat <- ncvar_get(ncFile_t,"latitude")
+unique(Lon)
+unique(Lat)
+time <- ncvar_get(ncFile_t,"time")
+fillvalue <- ncatt_get(ncFile_t, "t2m","missing_value") 
+t_vector <- ncvar_get(ncFile_t,"t2m")
+t_vector[t_vector == fillvalue$value] <- NA
+fillvalue2 <- ncatt_get(ncFile_t, "sd") 
+snow_vector <- ncvar_get(ncFile_t,"sd")
+snow_vector[snow_vector == fillvalue2$value] <- NA
+
+combined_t_df <- data.frame(DateTime = as_datetime("1900-01-01") + hours(time) - hours(6), #convert to CT
+                           Temp_C = t_vector - 273.15,
+                           Snow_m = snow_vector,
+                           Lon = Lon,
+                           Lat = Lat)
+
+combined_t_df <- combined_t_df%>%
+  mutate(Temp_C = trunc(Temp_C * 100000) / 100000)
+
+write.csv(combined_t_df,"historical_temp_output_era5_daily.csv", row.names = F)
+```
+
+## Format and plot
+
+```{r}
+temps <- read_csv("historical_temp_output_era5_daily.csv") %>%
+  mutate(Date = as.Date(DateTime))
+
+dates <- read_csv("Dates.csv")
+
+pre_birke <- data.frame(Date = as.Date(as.Date("1940-02-01"):as.Date("1972-02-28")),
+                        Modified = "pre-Birke") %>%
+  filter(month(Date) == 2,
+         weekdays(Date) == "Saturday") %>%
+  mutate(Year = year(Date)) %>%
+  group_by(Year) %>%
+  filter(Date == max(Date)) %>%
+  ungroup()
+
+temp_by_date <- dates %>%
+  full_join(pre_birke) %>%
+  left_join(temps) %>%
+  mutate(time = ifelse(hour(DateTime) == 0, "Midnight", 
+                       ifelse(hour(DateTime) == 12, "Noon", NA))) %>%
+  select(-Lat, -Lon) %>%
+  filter(!is.na(Temp_C)) 
+
+temp_by_date %>%
+  mutate(Modified = ifelse(is.na(Modified), 0, Modified)) %>%
+  ggplot(aes(x = Date, y = Temp_C * (9/5) + 32)) +
+  geom_point(aes(shape = as.factor(Modified))) +
+  scale_shape_manual(values = c(16, 4, 1, 8), 
+                     labels = c("No change", "Canceled", "Pre-birke", "Weather modification")) +
+  geom_smooth(method = "lm") +
+  geom_hline(yintercept = 32, linetype = "dashed") +
+  ylab("Temperature (ºF)") +
+  facet_wrap(~time) +
+  theme(legend.title = element_blank())
+
+data_2024 <- data.frame(time = "Noon",
+                        Modified = "y",
+                        Date = as.Date("2024-02-24"),
+                        Snow_m = 0,
+                        Temp_C = (40 - 32) * (5/9))
+
+temp_by_date %>%
+  full_join(data_2024) %>%
+  filter(time == "Noon") %>%
+  mutate(Modified = ifelse(is.na(Modified), 0, Modified),
+         Modified = factor(Modified,
+                           levels = c("0", "y", "canceled", "pre-Birke")),
+         Color = ifelse(Temp_C < 0, "Freezing", "Above freezing")) %>%
+  ggplot(aes(x = Date, y = Snow_m * 39.3701)) +
+  geom_vline(xintercept = as.Date("1973-02-24"), linetype = "dashed", color = "grey") +
+  geom_smooth(method = "lm", color = "black") +
+  geom_point(aes(shape = as.factor(Modified), color = Color)) +
+  scale_shape_manual(values = c(16, 8, 4, 1), 
+                     labels = c("No change", "Weather modification", "Canceled", "Pre-Birke"),
+                     name = "Birke status") +
+  scale_color_manual(values = c("red","blue")) +
+  ylab("Snow (in)") +
+  theme_bw() +
+  theme(legend.title = element_blank(),
+        axis.title.x = element_blank())
+
+temp_by_date %>%
+  full_join(data_2024) %>%
+  filter(time == "Noon") %>%
+  mutate(Modified = ifelse(is.na(Modified), 0, Modified),
+         Modified = factor(Modified,
+                           levels = c("0", "y", "canceled", "pre-Birke"))) %>%
+  ggplot(aes(x = Date, y = Snow_m * 39.3701)) +
+  geom_vline(xintercept = as.Date("1973-02-24"), linetype = "dashed", color = "grey") +
+  geom_smooth(method = "lm", color = "black") +
+  geom_point(aes(shape = as.factor(Modified), 
+                 color = Temp_C * (9/5) + 32)) +
+  scale_shape_manual(values = c(16, 8, 4, 1), 
+                     labels = c("No change", "Weather modification", "Canceled", "Pre-Birke"),
+                     name = "Birke status") +
+  scale_color_gradient2(low = "blue",
+                        high = "red",
+                        mid = "purple",
+                        midpoint = 32,
+                        name = "Temperature\nat noon (º F)") +
+  ylab("Snow on the day of the Birke (inches)") +
+  theme_bw() +
+  theme(axis.title.x = element_blank())
+```
+
