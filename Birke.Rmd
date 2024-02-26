@@ -90,28 +90,16 @@ data_2024 <- data.frame(time = "Noon",
                         Modified = "y",
                         Date = as.Date("2024-02-24"),
                         Snow_m = 0,
-                        Temp_C = (40 - 32) * (5/9))
+                        Temp_C = (40 - 32) * (5/9),
+                        Year = 2024)
 
-temp_by_date %>%
+for_lm <- temp_by_date %>%
   full_join(data_2024) %>%
   filter(time == "Noon") %>%
-  mutate(Modified = ifelse(is.na(Modified), 0, Modified),
-         Modified = factor(Modified,
-                           levels = c("0", "y", "canceled", "pre-Birke")),
-         Color = ifelse(Temp_C < 0, "Freezing", "Above freezing")) %>%
-  ggplot(aes(x = Date, y = Snow_m * 39.3701)) +
-  geom_vline(xintercept = as.Date("1973-02-24"), linetype = "dashed", color = "grey") +
-  geom_smooth(method = "lm", color = "black") +
-  geom_point(aes(shape = as.factor(Modified), color = Color)) +
-  scale_shape_manual(values = c(16, 8, 4, 1), 
-                     labels = c("No change", "Weather modification", "Canceled", "Pre-Birke"),
-                     name = "Birke status") +
-  scale_color_manual(values = c("red","blue")) +
-  ylab("Snow (in)") +
-  theme_bw() +
-  theme(legend.title = element_blank(),
-        axis.title.x = element_blank())
+  mutate(Snow_in = Snow_m * 39.3701)
+summary(lm(for_lm$Snow_in ~ for_lm$Year))
 
+jpeg("Figures/birke_snow.jpg", width = 6, height = 3.5, units = "in", res = 300)
 temp_by_date %>%
   full_join(data_2024) %>%
   filter(time == "Noon") %>%
@@ -131,8 +119,46 @@ temp_by_date %>%
                         mid = "purple",
                         midpoint = 32,
                         name = "Temperature\nat noon (º F)") +
-  ylab("Snow on the day of the Birke (inches)") +
+  ylab("Snow depth on the day of the Birke (inches)") +
   theme_bw() +
   theme(axis.title.x = element_blank())
+dev.off()
+```
+
+Binary regression
+
+```{r}
+for_bin_reg <- temp_by_date %>%
+  full_join(data_2024) %>%
+  filter(time == "Noon") %>%
+  mutate(Modified = ifelse(is.na(Modified), 0, Modified),
+         Modified = factor(Modified,
+                           levels = c("0", "y", "canceled", "pre-Birke")),
+         Snow_tf = ifelse(Snow_m * 39.3701 < 1, 0, 1))
+reg = glm(Snow_tf ~ Year, data = for_bin_reg, family = "binomial")
+
+x = 1940:2024
+probs = data.frame(Year = x,
+                   Probability = predict(reg, list(Year = x), type = "response")) 
+
+jpeg("Figures/birke_snow_prob.jpg", width = 5, height = 3.5, units = "in", res = 300)
+for_bin_reg %>%
+  ggplot(aes(x = Year, y = Snow_tf)) +
+  geom_vline(xintercept = 1973, linetype = "dashed", color = "grey") +
+  geom_point(aes(shape = as.factor(Modified), 
+                 color = Temp_C * (9/5) + 32), alpha = 0.5) +
+  scale_shape_manual(values = c(16, 8, 4, 1), 
+                     labels = c("No change", "Weather modification", "Canceled", "Pre-Birke"),
+                     name = "Birke status") +
+  scale_color_gradient2(low = "blue",
+                        high = "red",
+                        mid = "purple",
+                        midpoint = 32,
+                        name = "Temperature\nat noon (º F)") +
+  ylab("Probability of snow > 1 in deep") +
+  geom_line(data = probs, aes(x = Year, y = Probability), color = "black") +
+  theme_bw() +
+  theme(axis.title.x = element_blank())
+dev.off()
 ```
 
