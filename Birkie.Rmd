@@ -67,10 +67,19 @@ pre_birkie <- data.frame(Date = as.Date(as.Date("1940-02-01"):as.Date("1972-02-2
 
 temp_by_date <- dates %>%
   full_join(pre_birkie) %>%
-  left_join(temps) %>%
-  mutate(time = ifelse(hour(DateTime) == 0, "Midnight", 
-                       ifelse(hour(DateTime) == 12, "Noon", NA))) %>%
-  select(-Lat, -Lon) %>%
+  mutate(date_1 = Date - days(1),
+         date_2 = Date - days(2),
+         date_3 = Date - days(3),
+         date_4 = Date - days(4),
+         date_5 = Date - days(5),
+         date_6 = Date - days(6)) %>%
+  rename(date_0 = Date) %>%
+  pivot_longer(cols = starts_with("date"), names_to = "day", values_to = "Date") %>%
+  left_join(temps %>% filter(hour(DateTime) == 12)) %>%
+  group_by(Year, Modified) %>%
+  summarize(Date = min(Date),
+            Temp_C = mean(Temp_C, na.rm = T),
+            Snow_m = Snow_m[day == "date_0"]) %>%
   filter(!is.na(Temp_C)) 
 ```
 
@@ -78,7 +87,7 @@ Plot temp
 
 ```{r}
 temp_by_date %>%
-  mutate(Modified = ifelse(is.na(Modified), 0, Modified)) %>%
+  mutate(Modified = ifelse(is.na(Modified), "0", Modified)) %>%
   ggplot(aes(x = Date, y = Temp_C * (9/5) + 32)) +
   geom_point(aes(shape = as.factor(Modified))) +
   scale_shape_manual(values = c(16, 4, 1, 8), 
@@ -86,15 +95,14 @@ temp_by_date %>%
   geom_smooth(method = "lm") +
   geom_hline(yintercept = 32, linetype = "dashed") +
   ylab("Temperature (ºF)") +
-  facet_wrap(~time) +
+  #facet_wrap(~time) +
   theme(legend.title = element_blank())
 ```
 
 Plot snow
 
 ```{r}
-data_2024 <- data.frame(time = "Noon",
-                        Modified = "y",
+data_2024 <- data.frame(Modified = "y",
                         Date = as.Date("2024-02-24"),
                         Snow_m = 0,
                         Temp_C = (40 - 32) * (5/9),
@@ -139,8 +147,8 @@ Binary regression
 ```{r}
 for_bin_reg <- temp_by_date %>%
   full_join(data_2024) %>%
-  filter(time == "Noon") %>%
-  mutate(Modified = ifelse(is.na(Modified), 0, Modified),
+  #filter(time == "Noon") %>%
+  mutate(Modified = ifelse(is.na(Modified), "0", Modified),
          Modified = factor(Modified,
                            levels = c("0", "y", "canceled", "pre-birkie")),
          Snow_tf = ifelse(Snow_m * 39.3701 < 1, 0, 1))
@@ -183,7 +191,7 @@ for_bin_reg %>%
   scale_shape_manual(values = c(16, 8, 4, 1), 
                      labels = c("No change", "Weather modification", "Canceled", "Pre-birkie"),
                      name = "Birkie status") +
-  ylab("Probability of ≥ 1 inch snow\nwater equivalent on the day of the birkie") +
+  ylab("Probability of ≥ 1 inch snow water equivalent\non the day of the Birkie") +
   geom_text(aes(x = 1942, y = 0.7, 
                 label = "Logistic regression\nOdds ratio: 0.95\np = 0.016"),
             hjust = 0, data = data.frame()) +
@@ -191,5 +199,180 @@ for_bin_reg %>%
   theme_bw() +
   theme(axis.title.x = element_blank())
 dev.off()
+
+for_bin_reg %>%
+  ggplot(aes(x = Temp_C, y = Snow_m))+
+  geom_point(aes(color = Year > 1973, shape = Modified))+
+  scale_shape_manual(values = c(16, 8, 4, 1), 
+                     labels = c("No change", "Weather modification", "Canceled", "Pre-birkie"),
+                     name = "Birkie status") 
+
+for_bin_reg %>%
+  ggplot(aes(x = Year > 1973, y = Snow_m))+
+  geom_boxplot()
+
+for_bin_reg %>%
+  ggplot(aes(x = Year > 1973))+
+  geom_col(aes(fill = Snow_tf))
+
+for_bin_reg %>%
+  mutate(Year = Year > 1973) %>%
+  group_by(Year) %>%
+  mutate(n = n()) %>%
+  ggplot(aes(x = Year, y = 1/n))+
+  geom_col(aes(fill = Snow_tf))
+
+for_bin_reg %>%
+  mutate(Year = Year > 1973) %>%
+  group_by(Year) %>%
+  mutate(n = n()) %>%
+  ggplot(aes(x = Year, y = 1/n))+
+  geom_col(aes(fill = Snow_tf))
+
+jpeg("Figures/birkie_snow_prob_by_weather.jpg", width = 12, height = 3, units = "in", res = 300)
+for_bin_reg %>%
+  mutate(Weather = ifelse(Snow_tf == F & Temp_C > 0, "Both",
+                          ifelse(Temp_C > 0, "Temperatures\nabove freezing",
+                                 ifelse(Snow_tf == F, "< 1 inches SWE",
+                                        "Neither"))),
+         Weather = factor(Weather, levels = c("< 1 inches SWE", "Temperatures\nabove freezing", "Both"))) %>%
+  ggplot(aes(x = Year))+
+  geom_col(aes(y = 1, fill = Weather, color = Weather), width = 1)+
+  geom_point(aes(shape = Modified, y = 1.05), data = . %>% filter(Modified %in% c("canceled", "y")))+
+  geom_vline(xintercept = 1973, linetype = "dashed", color = "grey")+
+  annotate("label", x = 1973, y = 0.2, label = "Birkie start", size = 3)+
+  scale_shape_manual(values = c(8, 4), 
+                     labels = c("Weather modification", "Canceled"),
+                     name = "Birkie status")+
+  scale_fill_manual(values = c("#373E40", "#E5C1BD", "#CC2936"), na.translate = F)+
+  scale_color_manual(values = c("#373E40", "#E5C1BD", "#CC2936"), na.translate = F)+
+  theme_bw()+
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "bottom",
+        legend.direction = "vertical",
+        legend.box = "horizontal")
+dev.off()
+
+#remotes::install_github("coolbutuseless/ggpattern")
+library(ggpattern)
+jpeg("Figures/birkie_snow_prob_by_weather.jpg", width = 6, height = 1.75, units = "in", res = 300)
+for_bin_reg %>%
+  mutate(Temp_tf = ifelse(Temp_C > 0, "Temperatures above freezing", NA),
+         Snow_tf = ifelse(Snow_tf == F, "< 1 inch snow water equivalent", NA)) %>%
+  ggplot(aes(x = Year))+
+  geom_col(aes(y = 1, fill = Temp_tf), width = 1)+
+  geom_col_pattern(aes(y = 1, 
+                       pattern = Snow_tf),
+                   data = . %>% filter(!is.na(Snow_tf)),
+                   pattern_fill = "black",
+                   pattern_density = 0.05, 
+                   pattern_angle = 45,
+                   pattern_spacing = 0.04,
+                   pattern_key_scale_factor = 0.6,
+                   alpha = 0,
+                   width = 0.7)+
+  #geom_point(aes(shape = Modified, y = 1.05), data = . %>% filter(Modified %in% c("canceled", "y")))+
+  geom_vline(xintercept = 1973, linetype = "dashed", color = "grey")+
+  annotate("label", x = 1973, y = 0.3, label = "Birkie start", size = 3)+
+  scale_shape_manual(values = c(8, 4), 
+                     labels = c("Weather modification", "Canceled"),
+                     name = "Birkie status")+
+  scale_fill_manual(values = c("#E5C1BD"), na.translate = F)+
+  scale_color_manual(values = c("#E5C1BD"), na.translate = F)+
+  scale_pattern_manual(values = c(`< 1 inch snow water equivalent` = "stripe")) +
+  scale_x_continuous(n.breaks = 10, expand = c(0,0))+
+  scale_y_continuous(expand = c(0,0))+
+  theme_bw()+
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.key.size = unit(0.5,"line"),
+        legend.position = "bottom",
+        legend.title = element_blank())
+dev.off()
+```
+
+Ranger station:
+https://www.ncdc.noaa.gov/cdo-web/datasets/GHCND/stations/GHCND:USC00473511/detail
+
+```{r}
+ranger_station <- read_csv("ranger_station.csv") %>%
+  rename(Date = DATE)
+dates <- read_csv("Dates.csv") %>%
+  mutate(Modified = ifelse(year(Date) == 2024, "y", Modified))
+
+pre_birkie <- data.frame(Date = as.Date(as.Date("1900-02-01"):as.Date("1972-02-28")),
+                        Modified = "pre-birkie") %>%
+  filter(month(Date) == 2,
+         weekdays(Date) == "Saturday") %>%
+  mutate(Year = year(Date)) %>%
+  group_by(Year) %>%
+  filter(Date == max(Date)) %>%
+  ungroup()
+
+snwd_by_date <- dates %>%
+  full_join(pre_birkie) %>%
+  left_join(ranger_station)
+
+for_bin_reg <- snwd_by_date %>%
+  full_join(data_2024) %>%
+  mutate(Modified = ifelse(is.na(Modified), 0, Modified),
+         Modified = factor(Modified,
+                           levels = c("0", "y", "canceled", "pre-birkie")),
+         Snow_tf = ifelse(SNWD <= 5, 0, 1)) %>%
+  arrange(Date)
+reg = glm(Snow_tf ~ Year, data = for_bin_reg, family = "binomial")
+summary(reg)
+exp(-0.04962)
+
+x = 1900:2024
+probs = data.frame(Year = x,
+                   Probability = predict(reg, list(Year = x), type = "response")) 
+
+for_bin_reg %>%
+  filter(!is.na(SNWD)) %>%
+  ggplot(aes(x = Year, y = SNWD)) +
+  geom_vline(xintercept = 1973, linetype = "dashed", color = "grey") +
+  geom_point(aes(shape = as.factor(Modified)), alpha = 0.5) +
+  scale_shape_manual(values = c(16, 8, 4, 1), 
+                     labels = c("No change", "Weather modification", "Canceled", "Pre-birkie"),
+                     name = "Birkie status") +
+  ylab("Inches of snow on the day of the birkie") +
+  theme_bw() +
+  theme(axis.title.x = element_blank())
+
+for_bin_reg %>%
+  filter(!is.na(SNWD)) %>%
+  ggplot(aes(x = Year, y = SNWD)) +
+  geom_vline(xintercept = 1973, linetype = "dashed", color = "grey") +
+  geom_point(aes(shape = as.factor(Modified)), alpha = 0.5) +
+  scale_shape_manual(values = c(16, 8, 4, 1), 
+                     labels = c("No change", "Weather modification", "Canceled", "Pre-birkie"),
+                     name = "Birkie status") +
+  ylab("Inches of snow on the ground\nin Hayward, WI on the day of the birkie") +
+  theme_bw() +
+  theme(axis.title.x = element_blank())
+
+summary(lm(for_bin_reg$SNWD ~ for_bin_reg$Year))
+
+for_bin_reg %>%
+  filter(!is.na(Snow_tf)) %>%
+  ggplot(aes(x = Year, y = Snow_tf)) +
+  geom_vline(xintercept = 1973, linetype = "dashed", color = "grey") +
+  geom_point(aes(shape = as.factor(Modified)), alpha = 0.5) +
+  scale_shape_manual(values = c(16, 8, 4, 1), 
+                     labels = c("No change", "Weather modification", "Canceled", "Pre-birkie"),
+                     name = "Birkie status") +
+  ylab("Inches of snow on the day of the birkie") +
+  geom_line(data = probs, aes(x = Year, y = Probability), color = "black") +
+  theme_bw() +
+  theme(axis.title.x = element_blank())
 ```
 
